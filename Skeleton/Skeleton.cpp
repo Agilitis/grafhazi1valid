@@ -66,114 +66,48 @@ unsigned int vao;	   // virtual world on the GPU
 
 
 					   // 2D camera
-struct Camera {
-	float wCx, wCy;	// center in world coordinates
-	float wWx, wWy;	// width and height in world coordinates
+// 2D camera
+class Camera2D {
+	vec2 wCenter; // center in world coordinates
+	vec2 wSize;   // width and height in world coordinates
 public:
-	Camera() {
-		Animate(0);
-	}
+	Camera2D() : wCenter(0, 0), wSize(20, 20) { }
 
-	mat4 V() { // view matrix: translates the center to the origin
-		return mat4(
-			1, 0, 0, 0,
-			0, 1, 0, 0,
-			0, 0, 1, 0,
-			-wCx, -wCy, 0, 1);
-	}
+	mat4 V() { return TranslateMatrix(-wCenter); }
+	mat4 P() { return ScaleMatrix(vec2(2 / wSize.x, 2 / wSize.y)); }
 
-	mat4 P() { // projection matrix: scales it to be a square of edge length 2
-		return mat4(
-			2 / wWx, 0, 0, 0,
-			0, 2 / wWy, 0, 0,
-			0, 0, 1, 0,
-			0, 0, 0, 1);
-	}
+	mat4 Vinv() { return TranslateMatrix(wCenter); }
+	mat4 Pinv() { return ScaleMatrix(vec2(wSize.x / 2, wSize.y / 2)); }
 
-	mat4 Vinv() { // inverse view matrix
-		return mat4(
-			1, 0, 0, 0,
-			0, 1, 0, 0,
-			0, 0, 1, 0,
-			wCx, wCy, 0, 1);
-	}
-
-	mat4 Pinv() { // inverse projection matrix
-		return mat4(
-			wWx / 2, 0, 0, 0,
-			0, wWy / 2, 0, 0,
-			0, 0, 1, 0,
-			0, 0, 0, 1);
-	}
-
-	void Animate(float t) {
-		wCx = 0; // 10 * cosf(t);
-		wCy = 0;
-		wWx = 20;
-		wWy = 20;
+	void Zoom(float s) { wSize = wSize * s; }
+	void Pan(vec2 t) { wCenter = wCenter + t; }
+	void setCenter(vec2 center) {
+		wCenter = center;
 	}
 };
 
-
-Camera camera;	// 2D camera
-bool animate = false;
+Camera2D camera;	// 2D camera
+bool animate = true;
 float tCurrent = 0;	// current clock in sec
 const int nTesselatedVertices = 2000;
-
-class Circle {
-	unsigned int vaoCtrlPoint, vboCtrlPoint;
-	unsigned int vaoAnimatedObject, vboAnimatedObject;
-	vec4 middle;
-public:
-	Circle() {
-		glGenVertexArrays(1, &vaoCtrlPoint);
-		glBindVertexArray(vaoCtrlPoint);
-
-		glGenBuffers(1, &vboCtrlPoint); // Generate 1 vertex buffer object
-		glBindBuffer(GL_ARRAY_BUFFER, vboCtrlPoint);
-		// Enable the vertex attribute arrays
-		glEnableVertexAttribArray(0);  // attribute array 0
-									   // Map attribute array 0 to the vertex data of the interleaved vbo
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), NULL);
-	}
-	void Draw() {
-		mat4 VPTransform = camera.V() * camera.P();
-
-		VPTransform.SetUniform(gpuProgram.getId(), "MVP");
-
-		int colorLocation = glGetUniformLocation(gpuProgram.getId(), "color");
-
-
-
-			glBindVertexArray(vaoCtrlPoint);
-			glBindBuffer(GL_ARRAY_BUFFER, vboCtrlPoint);
-			glBufferData(GL_ARRAY_BUFFER,  4 * sizeof(float), &middle, GL_DYNAMIC_DRAW);
-			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 0, 0);
-			glPointSize(10.0f);
-			glDrawArrays(GL_LINE_STRIP, 0, 4);
-
-		}
-
-	virtual float tStart() { return 0; }
-	virtual float tEnd() { return 1; }
-
-	virtual void AddControlPoint(float cX, float cY) {
-		middle = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
-	}
-	
-
-};
-
+const vec4 gravity = vec4(0.0f, -0.001f, 0.0f, 1.0f);
 
 class Curve {
 	unsigned int vaoCurve, vboCurve;
 	unsigned int vaoCtrlPoints, vboCtrlPoints;
 	unsigned int vaoAnimatedObject, vboAnimatedObject;
+	int currentSize;
+	std::vector<vec4> linePoints;
 protected:
 	std::vector<vec4> wCtrlPoints;		// coordinates of control points
 public:
+	int getPoints() {
+		return wCtrlPoints.size();
+	}
+
 	Curve() {
 		// Curve
+		currentSize = 0;
 		glGenVertexArrays(1, &vaoCurve);
 		glBindVertexArray(vaoCurve);
 
@@ -213,6 +147,10 @@ public:
 
 	}
 
+	virtual vec4 getPointAtPosition(float position) {
+		return 0;
+	}
+
 	virtual vec4 r(float t) { return wCtrlPoints[0]; }
 	virtual float tStart() { return 0; }
 	virtual float tEnd() { return 1; }
@@ -221,6 +159,8 @@ public:
 		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
 		wCtrlPoints.push_back(wVertex);
 	}
+
+
 
 	// Returns the selected control point or -1
 	int PickControlPoint(float cX, float cY) {
@@ -255,7 +195,7 @@ public:
 		}
 
 		if (wCtrlPoints.size() >= 4) {	// draw curve
-			std::vector<float> vertexData	;
+			std::vector<float> vertexData;
 			for (int i = 0; i < nTesselatedVertices; i++) {	// Tessellate
 				float tNormalized = (float)i / (nTesselatedVertices - 1);
 				float t = tStart() + (tEnd() - tStart()) * tNormalized;
@@ -271,30 +211,183 @@ public:
 			glDrawArrays(GL_LINE_STRIP, 0, nTesselatedVertices);
 
 			if (animate) {
-				// animation on curve
-				float t = tCurrent;
-				while (t > tEnd()) t -= tEnd();
-				vec4 currentLocation = r(t);
-				// copy data to the GPU
-				glBindVertexArray(vaoAnimatedObject);
-				glBindBuffer(GL_ARRAY_BUFFER, vboAnimatedObject);
-				glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(float), &currentLocation, GL_DYNAMIC_DRAW);
-				if (colorLocation >= 0) glUniform3f(colorLocation, 1, 1, 1);
-				glPointSize(1.0f);
-				glDrawArrays(GL_POINTS, 0, 1);	// draw 1 point
+
+
+
 			}
 		}
 	}
+
+	std::vector<vec4> getLinePoints() {
+		if (currentSize < wCtrlPoints.size()) {
+			linePoints.clear();
+			for (int i = 0; i < nTesselatedVertices; i++) {	// Tessellate
+				float tNormalized = (float)i / (nTesselatedVertices - 1);
+				float t = tStart() + (tEnd() - tStart()) * tNormalized;
+				vec4 wVertex = r(t);
+				linePoints.push_back(wVertex);
+			}
+			currentSize = wCtrlPoints.size();
+		}
+		return linePoints;
+	}
 };
+
+
+
+Curve * curve;
+
+class Circle {
+	float position;
+	unsigned int vaoCtrlPoint, vboCtrlPoint;
+	unsigned int vaoAnimatedObject, vboAnimatedObject;
+	vec4 middle;
+	bool direction_right;
+	const float RADIUS = 0.4f;
+	vec4 movementVector;
+public:
+	Circle() {
+		movementVector = vec4(0.0f, 0.0f, 0.0f, 1.0f);
+		direction_right = true;
+		position = 41.0;
+		middle = vec4(1.0f, 1.0f, 0.0f, 1.0f);
+		glGenVertexArrays(1, &vaoCtrlPoint);
+		glBindVertexArray(vaoCtrlPoint);
+
+		glGenBuffers(1, &vboCtrlPoint); // Generate 1 vertex buffer object
+		glBindBuffer(GL_ARRAY_BUFFER, vboCtrlPoint);
+		// Enable the vertex attribute arrays
+		glEnableVertexAttribArray(0);  // attribute array 0
+									   // Map attribute array 0 to the vertex data of the interleaved vbo
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), NULL);
+	}
+
+	vec2 getCenter() {
+		return vec2(middle.x, middle.y);
+	}
+
+
+
+	void Draw() {
+		
+		mat4 VPTransform = camera.V() * camera.P();
+		mat4 rungAnimationRotationMatrix;
+		VPTransform.SetUniform(gpuProgram.getId(), "MVP");
+
+		int colorLocation = glGetUniformLocation(gpuProgram.getId(), "color");
+		std::vector<float> middlePoint;
+		std::vector<float> circlePoints;
+		std::vector<float> rungPoints;
+		middlePoint.push_back(middle.x);
+		middlePoint.push_back(middle.y);
+		float rotationSpeed = tCurrent / -10.0f;
+		//setup rotation matrix for animation	
+		if (animate) {
+			std::vector<vec4> linePoints = curve->getLinePoints();
+			movementVector += gravity;
+
+			for (int i = 0; i < nTesselatedVertices - 1; i++) {
+				//Check if X coordiante is good
+				if (middle.x > linePoints[i].x && middle.x < linePoints[i + 1].x) {
+					//on curve
+					if (middle.y-(RADIUS*2) <= linePoints[i].y) {
+						movementVector = linePoints[i + 1] - linePoints[i];
+					}
+					//above curve
+					else {
+
+					}
+				}
+			}
+			
+
+			//Rotating the circle
+			rungAnimationRotationMatrix = RotationMatrix(2.0f * 3.1415926f * rotationSpeed, vec3(0, 0, 1));
+
+			//Moving the circle
+			middle = middle * TranslateMatrix(vec3(movementVector.x, movementVector.y, movementVector.z));
+
+			
+		}
+
+
+		//draw middle
+		glBindVertexArray(vaoCtrlPoint);
+		glBindBuffer(GL_ARRAY_BUFFER, vboCtrlPoint);
+		glBufferData(GL_ARRAY_BUFFER, middlePoint.size() * sizeof(float), &middlePoint[0], GL_DYNAMIC_DRAW);
+		if (colorLocation >= 0) glUniform3f(colorLocation, 1, 0, 0);
+		glPointSize(2.0f);
+		glDrawArrays(GL_POINTS, 0, 1);
+
+		//draw circle around middle
+		const int TESSELATED_VERTICES = 20;
+		vec4 circlePoint = vec4(middle.x, middle.y, 0, 1) * TranslateMatrix(vec3(RADIUS, RADIUS, 0.0f));
+		circlePoints.push_back(circlePoint.x);
+		circlePoints.push_back(circlePoint.y);
+		for (int i = 0; i < TESSELATED_VERTICES+1; i++) {
+			mat4 rotationMatrix = RotationMatrix(2.0f * 3.1415926f * (float)i / (float)TESSELATED_VERTICES, vec3(0,0,1));
+			vec4 rotatedPoint = circlePoint * TranslateMatrix(vec3(-middle.x, -middle.y,0)) * rotationMatrix * TranslateMatrix(vec3(middle.x, middle.y, 0));
+			circlePoints.push_back(rotatedPoint.x);
+			circlePoints.push_back(rotatedPoint.y);
+		}
+
+		glBufferData(GL_ARRAY_BUFFER, circlePoints.size() * sizeof(float), &circlePoints[0], GL_DYNAMIC_DRAW);
+		glDrawArrays(GL_LINE_STRIP, 0, TESSELATED_VERTICES+2);
+
+		//draw rungs
+		const int RUNG_NUMBER = 6;
+		vec4 rungPoint;
+		if (animate) {
+			rungPoint = vec4(0, 0, 0, 1) * TranslateMatrix(vec3(RADIUS, RADIUS, 0.0f)) * rungAnimationRotationMatrix * TranslateMatrix(vec3(middle.x, middle.y, 0));
+		}
+		else {
+			rungPoint = vec4(middle.x, middle.y, 0, 1) * TranslateMatrix(vec3(RADIUS, RADIUS, 0.0f));
+		}
+
+
+		for (int i = 0; i < RUNG_NUMBER; i++) {
+			mat4 rotationMatrix = RotationMatrix(2.0f * 3.1415926f * (float)i / (float)RUNG_NUMBER, vec3(0, 0, 1));
+			vec4 rotatedPoint = rungPoint * TranslateMatrix(vec3(-middle.x, -middle.y, 0)) * rotationMatrix * TranslateMatrix(vec3(middle.x, middle.y, 0));
+			rungPoints.push_back(middle.x);
+			rungPoints.push_back(middle.y);
+			rungPoints.push_back(rotatedPoint.x);
+			rungPoints.push_back(rotatedPoint.y);
+		}
+
+		glBufferData(GL_ARRAY_BUFFER, rungPoints.size() * sizeof(float), &rungPoints[0], GL_DYNAMIC_DRAW);
+		glDrawArrays(GL_LINE_STRIP, 0, RUNG_NUMBER*2);
+
+	
+		}
+
+	virtual float tStart() { return 0; }
+	virtual float tEnd() { return 1; }
+
+	virtual void AddControlPoint(float cX, float cY) {
+		middle = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
+	}
+	
+
+};
+Circle* circle;
+
+
+
 
 
 class KochanekBartelsCurve : public Curve {
 public:
 	std::vector<float> ts;
 	void AddControlPoint(float cX, float cY) {
+		printf("Adding control point!");
 		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
 		ts.push_back(wCtrlPoints.size()*0.01f);
 		wCtrlPoints.push_back(wVertex);
+		for (int i = 0; i < ts.size(); i++) {
+			ts[i] = (1.0f / (ts.size() + 1)) * i;
+			printf("%f \n", ts[i]);
+		}
+		printf("%d size\n", ts.size());
 
 	}
 	vec4 hermite_interpolation(vec4 p0, vec4 v0, float t0, vec4 p1, vec4 v1, float t1, float t) {
@@ -305,20 +398,23 @@ public:
 		return a3 * pow(t - t0, 3) + a2 * pow(t - t0, 2) + a1 * (t - t0) + a0;
 	}
 
+
+
 private:
 	virtual vec4 r(float t) {
 		if (wCtrlPoints.size() >= 4) {
-			const float tension = -0.5f;
-			for (int i = 0; i < wCtrlPoints.size()-1; i++) {
+			const float tension = 0.5f;
+			for (int i = 0; i < wCtrlPoints.size()-2; i++) {
 				if (ts[i] <= t && t <= ts[i + 1]) {
 					vec4 v0;
+					vec4 v1;
 					if (i == 0) {
-						v0 = (0, 0, 0, 0);
+						v0 = (0.0f, 0.0f, 0.0f, 0.0f);
 					}
 					else {
 						v0 = ((wCtrlPoints[i + 1] - wCtrlPoints[i]) / (ts[i + 1] - ts[i]) + (wCtrlPoints[i] - wCtrlPoints[i - 1]) / (ts[i] - ts[i - 1])) * (1-tension);
 					}
-					vec4 v1 = ((wCtrlPoints[i + 2] - wCtrlPoints[i + 1]) / (ts[i + 2] - ts[i + 1]) + (wCtrlPoints[i + 1] - wCtrlPoints[i]) / (ts[i + 1] - ts[i])) * (1-tension);
+					v1 = ((wCtrlPoints[i + 2] - wCtrlPoints[i + 1]) / (ts[i + 2] - ts[i + 1]) + (wCtrlPoints[i + 1] - wCtrlPoints[i]) / (ts[i + 1] - ts[i])) * (1-tension);
 					return hermite_interpolation(wCtrlPoints[i], v0, ts[i], wCtrlPoints[i + 1], v1, ts[i + 1], t);
 				}
 			}
@@ -328,13 +424,16 @@ private:
 };
 
 
-Curve * curve;
-Circle* circle;
+
+
+
 
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 	curve = new KochanekBartelsCurve();
+	curve->AddControlPoint(-1.0f, 0.0f);
 	circle = new Circle();
+	circle->AddControlPoint(-0.8f, 0.3f);
 	gpuProgram.Create(vertexSource, fragmentSource, "outColor");
 }
 
@@ -343,7 +442,9 @@ void onDisplay() {
 	glClearColor(0, 0, 0, 0);     // background color
 	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
 	curve->Draw();
-	circle->Draw();
+	if (curve->getPoints() >= 4) {
+		circle->Draw();
+	}
 	// Set color to (0, 1, 0) = green
 	int location = glGetUniformLocation(gpuProgram.getId(), "color");
 	glUniform3f(location, 0.0f, 1.0f, 0.0f); // 3 floats
@@ -366,10 +467,11 @@ void onDisplay() {
 void onKeyboard(unsigned char key, int pX, int pY) {
 	if (key == 'd') glutPostRedisplay();         // if d, invalidate display, i.e. redraw
 	if (key == 'q') {
-		delete curve;
-		curve = new KochanekBartelsCurve();
-		glutPostRedisplay();
+		circle->AddControlPoint(1.0f, 0.0f);
 
+	}
+	if (key == 'l') {
+		camera.setCenter(circle->getCenter());
 	}
 }
 
@@ -423,6 +525,7 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
+	tCurrent = time / 1000.0f;
 	glutPostRedisplay();
 
 }
