@@ -86,6 +86,12 @@ public:
 	}
 };
 
+// Forrás: https://codereview.stackexchange.com/questions/144586/finding-the-distance-between-two-points-in-c
+
+float distanceBetweenTwoPoints(float x, float y, float a, float b) {
+	return sqrtf(pow(x - a, 2) + pow(y - b, 2));
+}
+
 Camera2D camera;	// 2D camera
 bool animate = true;
 float tCurrent = 0;	// current clock in sec
@@ -101,11 +107,16 @@ class Curve {
 protected:
 	std::vector<vec4> wCtrlPoints;		// coordinates of control points
 public:
+	virtual float getY(float x){
+		return 0.0f;
+	}
+
 	int getPoints() {
 		return wCtrlPoints.size();
 	}
 
 	Curve() {
+
 		// Curve
 		currentSize = 0;
 		glGenVertexArrays(1, &vaoCurve);
@@ -147,9 +158,16 @@ public:
 
 	}
 
-	virtual vec4 getPointAtPosition(float position) {
-		return 0;
+	bool isAbove(vec4 point) {
+		for (int i = 0; i < linePoints.size(); i++) {
+			if (linePoints[i].y > point.y) {
+				return false;
+			}
+		}
+		return true;
 	}
+
+
 
 	virtual vec4 r(float t) { return wCtrlPoints[0]; }
 	virtual float tStart() { return 0; }
@@ -196,10 +214,10 @@ public:
 
 		if (wCtrlPoints.size() >= 4) {	// draw curve
 			std::vector<float> vertexData;
-			for (int i = 0; i < nTesselatedVertices; i++) {	// Tessellate
-				float tNormalized = (float)i / (nTesselatedVertices - 1);
-				float t = tStart() + (tEnd() - tStart()) * tNormalized;
-				vec4 wVertex = r(t);
+			for (float i = -10.0f; i <= 10.0f; i+=0.1f) {	// Tessellate
+		/*		float tNormalized = (float)i / (nTesselatedVertices - 1);
+				float t = tStart() + (tEnd() - tStart()) * tNormalized;*/
+				vec4 wVertex = vec4(i, getY(i), 0.0f, 1.0f);
 				vertexData.push_back(wVertex.x);
 				vertexData.push_back(wVertex.y);
 			}
@@ -232,11 +250,11 @@ public:
 		return linePoints;
 	}
 
-	float getY(float x) {
-		float y = linePoints[0].y;
+	vec4 getPointAtPosition(float x) {
+		vec4 point = linePoints[0];
 		for (int i = 0; i < linePoints.size()-1; i++) {
 			if (linePoints[i].x < x && linePoints[i + 1].x  > x) {
-				return linePoints[i].y;
+				return linePoints[i];
 			}
 		}
 	}
@@ -297,7 +315,8 @@ std::vector<float> circle_circle_intersection(float x0, float y0, float r0,
 	ry = dx * (h / d);
 
 	/* Determine the absolute intersection points. */
-	return std::vector<float>() = { x2 + rx, y2 + ry };
+
+	return std::vector<float>() = { x2 + rx, y2 + ry, x2 - rx,  y2 - ry };
 
 	//*xi = x2 + rx;
 	//*xi_prime = x2 - rx;
@@ -354,51 +373,13 @@ public:
 		std::vector<float> bodyPoints;
 		std::vector<float> rightLegPoints;
 		std::vector<float> leftLegPoints;
+		std::vector<vec4> circleVecPoints;
+
 
 		middlePoint.push_back(middle.x);
 		middlePoint.push_back(middle.y);
 		float rotationSpeed = tCurrent / -5.0f;
 		//setup rotation matrix for animation	
-		if (animate) {
-			std::vector<vec4> linePoints = curve->getLinePoints();
-			movementVector += gravity;
-			if (middle.x > 9.5f) {
-				this->direction_right = false;
-			}
-			else if (middle.x < -9.5f) {
-				this->direction_right = true;
-			}
-
-
-
-			for (int i = 0; i < nTesselatedVertices - 1; i++) {
-				//Check if X coordiante is good
-				if (middle.x > linePoints[i].x && middle.x < linePoints[i + 1].x) {
-					//on curve
-					if ((middle.y - (RADIUS * 2)) + 0.11f <= linePoints[i].y) {
-						if (this->direction_right) {
-							movementVector = vec4(1.0f, 0.0f, 0.0f, 1.0f) * ((linePoints[i + 1] - linePoints[i]));
-						}
-						else {
-							movementVector = (linePoints[i + 1] - linePoints[i]) * -1.0f;
-							rotationSpeed *= -1.0f;
-						}
-					}
-					//above curve
-					else {
-					}
-				}
-			}
-
-
-			//Rotating the circle
-			rungAnimationRotationMatrix = RotationMatrix(2.0f * 3.1415926f * rotationSpeed, vec3(0, 0, 1));
-
-			//Moving the circle
-			middle = middle * TranslateMatrix(vec3(movementVector.x, movementVector.y, movementVector.z));
-
-
-		}
 
 
 		//draw middle
@@ -417,13 +398,49 @@ public:
 		for (int i = 0; i < TESSELATED_VERTICES + 1; i++) {
 			mat4 rotationMatrix = RotationMatrix(2.0f * 3.1415926f * (float)i / (float)TESSELATED_VERTICES, vec3(0, 0, 1));
 			vec4 rotatedPoint = circlePoint * TranslateMatrix(vec3(-middle.x, -middle.y, 0)) * rotationMatrix * TranslateMatrix(vec3(middle.x, middle.y, 0));
+			circleVecPoints.push_back(rotatedPoint);
 			circlePoints.push_back(rotatedPoint.x);
 			circlePoints.push_back(rotatedPoint.y);
 		}
 		glBufferData(GL_ARRAY_BUFFER, circlePoints.size() * sizeof(float), &circlePoints[0], GL_DYNAMIC_DRAW);
 		glDrawArrays(GL_LINE_STRIP, 0, TESSELATED_VERTICES + 2);
 
-	
+		if (animate) {
+			std::vector<vec4> linePoints = curve->getLinePoints();
+			float speed = 0.1f;
+
+			if (middle.x > 9.5f) {
+				this->direction_right = false;
+			}
+			else if (middle.x < -9.5f) {
+				this->direction_right = true;
+			}
+
+			vec4 derivate = vec4(middle.x + 0.01f, curve->getY(middle.x + 0.01f), 0.0f, 1.0f) - vec4(middle.x, curve->getY(middle.x), 0.0f, 1.0f);
+			vec4 perpendicular = vec4(-derivate.y, derivate.x, 0.0f, 1.0f);
+			//middle = vec4(middle.x + 0.01f, perpendicular.x, 0.0f, 1.0f);
+			vec4 newMiddle = vec4(middle.x + 0.01f, curve->getY(middle.x + 0.01f), 0.0f, 1.0f) * TranslateMatrix(vec3(perpendicular.x, perpendicular.y * RADIUS, 0.0f));
+			if (direction_right) {
+				middle.x += speed;
+			}
+			else {
+				middle.x -= speed;
+				rotationSpeed *= -1.0f;
+			}
+
+			middle.y = curve->getY(middle.x)+RADIUS+0.2f;
+
+			//middle = middle * TranslateMatrix(vec3(perpendicular.x, perpendicular.y, 0.0f));
+			//Rotating the circle
+			rungAnimationRotationMatrix = RotationMatrix(2.0f * 3.1415926f * rotationSpeed, vec3(0, 0, 1));
+
+			//Moving the circle
+			//vec4 linePointAtNewPosition = curve->getPointAtPosition(middle.x + movementVector.x);
+
+			//middle = linePointAtNewPosition;
+
+
+		}
 
 		//draw rungs
 		const int RUNG_NUMBER = 6;
@@ -476,8 +493,14 @@ public:
 		std::vector<float> kneePoints = circle_circle_intersection(middle.x, bodyBottom, LEG_LENGTH, rungPoints[10], rungPoints[11], LEG_LENGTH);
 		leftLegPoints.push_back(middle.x);
 		leftLegPoints.push_back(bodyBottom);
-		leftLegPoints.push_back(kneePoints[0]);
-		leftLegPoints.push_back(kneePoints[1]);
+		if (direction_right) {
+			leftLegPoints.push_back(kneePoints[0]);
+			leftLegPoints.push_back(kneePoints[1]);
+		}
+		else {
+			leftLegPoints.push_back(kneePoints[2]);
+			leftLegPoints.push_back(kneePoints[3]);
+		}
 
 		leftLegPoints.push_back(rungPoints[10]);
 		leftLegPoints.push_back(rungPoints[11]);
@@ -487,18 +510,25 @@ public:
 
 		//Draw leg 2
 		kneePoints = circle_circle_intersection(middle.x, bodyBottom, LEG_LENGTH, rungPoints[rungPoints.size() - 2], rungPoints[rungPoints.size() - 1], LEG_LENGTH);
-		printf("%f %f \n", kneePoints[0], kneePoints[1]);
 		rightLegPoints.push_back(middle.x);
 		rightLegPoints.push_back(bodyBottom);
+		if (direction_right) {
+			rightLegPoints.push_back(kneePoints[0]);
+			rightLegPoints.push_back(kneePoints[1]);
+		}
+		else {
+			rightLegPoints.push_back(kneePoints[2]);
+			rightLegPoints.push_back(kneePoints[3]);
+		}
 
-		rightLegPoints.push_back(kneePoints[0]);
-		rightLegPoints.push_back(kneePoints[1]);
 
 		rightLegPoints.push_back(rungPoints[rungPoints.size()-2]);
 		rightLegPoints.push_back(rungPoints[rungPoints.size()-1]);
 
 		glBufferData(GL_ARRAY_BUFFER, rightLegPoints.size() * sizeof(float), &rightLegPoints[0], GL_DYNAMIC_DRAW);
 		glDrawArrays(GL_LINE_STRIP, 0, 3);
+
+	
 	}
 
 	virtual float tStart() { return 0; }
@@ -522,23 +552,23 @@ public:
 	void AddControlPoint(float cX, float cY) {
 		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
 		printf("Adding control point at: %f %f", wVertex.x, wVertex.y);
-		if (wCtrlPoints.size() <= 4) {
+		if (wCtrlPoints.size() < 4) {
 			wCtrlPoints.push_back(wVertex);
-			ts.push_back(0.1f);
+			ts.push_back(wVertex.x);
 		}
 		else {
 			for (int i = 0; i < wCtrlPoints.size() - 1; i++) {
 				if (wCtrlPoints[i].x < wVertex.x && wCtrlPoints[i + 1].x > wVertex.x) {
 					wCtrlPoints.insert(wCtrlPoints.begin() + i + 1, wVertex);
-					ts.push_back(0.1f);
+					ts.insert(ts.begin() + i +1, wVertex.x);
 					break;
 				}
 			}
 		}
-		for (int i = 0; i < ts.size(); i++) {
+	/*	for (int i = 0; i < ts.size(); i++) {
 			ts[i] = (1.0f / (ts.size() + 1)) * i;
 			printf("%f \n", ts[i]);
-		}
+		}*/
 		printf("%d size\n", ts.size());
 
 	}
@@ -549,6 +579,26 @@ public:
 		vec4 a2 = ((p1 - p0) * 3.0 / pow((t1 - t0), 2)) - (v1 + v0 * 2.0) / (t1 - t0);
 		vec4 a3 = (p0 - p1) * 2.0 / pow(t1 - t0, 3) + ((v1 + v0) / pow(t1 - t0, 2));
 		return a3 * pow(t - t0, 3) + a2 * pow(t - t0, 2) + a1 * (t - t0) + a0;
+	}
+
+	float getY(float x) {
+		if (wCtrlPoints.size() >= 4) {
+			const float tension = -0.8f;
+			for (int i = 0; i < wCtrlPoints.size() - 2; i++) {
+				if (ts[i] <= x && x <= ts[i + 1]) {
+					vec4 v0;
+					vec4 v1;
+					if (i == 0) {
+						v0 = (0.0f, 0.0f, 0.0f, 0.0f);
+					}
+					else {
+						v0 = ((wCtrlPoints[i + 1] - wCtrlPoints[i]) / (ts[i + 1] - ts[i]) + (wCtrlPoints[i] - wCtrlPoints[i - 1]) / (ts[i] - ts[i - 1])) * ((1 - tension) / 2);
+					}
+					v1 = ((wCtrlPoints[i + 2] - wCtrlPoints[i + 1]) / (ts[i + 2] - ts[i + 1]) + (wCtrlPoints[i + 1] - wCtrlPoints[i]) / (ts[i + 1] - ts[i])) * ((1 - tension) / 2);
+					return hermite_interpolation(wCtrlPoints[i], v0, ts[i], wCtrlPoints[i + 1], v1, ts[i + 1], x).y;
+				}
+			}
+		}
 	}
 
 
@@ -584,11 +634,10 @@ bool followCircle = false;
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 	curve = new KochanekBartelsCurve();
-	curve->AddControlPoint(-0.99f, -0.5f);
+	curve->AddControlPoint(-1.0f, -0.5f);
 	curve->AddControlPoint(0.0f, -0.5f);
 	curve->AddControlPoint(0.5f, -0.5f);
-	curve->AddControlPoint(0.99f, -0.5f);
-	curve->AddControlPoint(0.99f, -0.5f);
+	curve->AddControlPoint(1.0f, -0.5f);
 	circle = new Circle();
 	circle->AddControlPoint(-0.8f, 0.3f);
 	gpuProgram.Create(vertexSource, fragmentSource, "outColor");
