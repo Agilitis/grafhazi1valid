@@ -374,13 +374,57 @@ public:
 		std::vector<float> rightLegPoints;
 		std::vector<float> leftLegPoints;
 		std::vector<vec4> circleVecPoints;
+		vec4 perpendicular;
 
 
-		middlePoint.push_back(middle.x);
-		middlePoint.push_back(middle.y);
 		float rotationSpeed = tCurrent / -5.0f;
 		//setup rotation matrix for animation	
+		if (animate) {
+			std::vector<vec4> linePoints = curve->getLinePoints();
+			float speed = 0.06f;
 
+			if (middle.x > 9.5f) {
+				this->direction_right = false;
+			}
+			else if (middle.x < -9.5f) {
+				this->direction_right = true;
+			}
+
+
+			if (direction_right) {
+				middle.x += speed;
+
+			}
+			else {
+				middle.x -= speed;
+				rotationSpeed *= -1.0f;
+			}
+
+			middle.y = curve->getY(middle.x + speed);
+
+			vec4 derivate = vec4(middle.x + 0.001f, curve->getY(middle.x + 0.001f), 0.0f, 1.0f) - vec4(middle.x, curve->getY(middle.x), 0.0f, 1.0f);
+			perpendicular = vec4(-derivate.y, derivate.x, 0.0f, 1.0f);
+			float length = sqrtf(perpendicular.x * perpendicular.x + perpendicular.y * perpendicular.y);
+			perpendicular = (perpendicular / length) * (RADIUS + 0.15f);
+			std::vector<float> vectorPoints;
+			vectorPoints.push_back(middle.x + speed);
+			vectorPoints.push_back(curve->getY(middle.x + speed));
+			vectorPoints.push_back(middle.x + speed + perpendicular.x);
+			vectorPoints.push_back(curve->getY(middle.x + speed) + perpendicular.y);
+			glLineWidth(4.0f);
+			glBufferData(GL_ARRAY_BUFFER, vectorPoints.size() * sizeof(float), &vectorPoints[0], GL_DYNAMIC_DRAW);
+			glDrawArrays(GL_LINE_STRIP, 0, 2);
+			glLineWidth(1.0f);
+			printf("Speed: %f, perpendicular.x: %f \n", speed, perpendicular.x);
+			//middle.x += perpendicular.x;
+		/*	middle.y += perpendicular.y;
+			middle.x += perpendicular.x;*/
+			//Rotating the circle
+			rungAnimationRotationMatrix = RotationMatrix(2.0f * 3.1415926f * rotationSpeed, vec3(0, 0, 1));
+		}
+
+		middlePoint.push_back(middle.x + perpendicular.x);
+		middlePoint.push_back(middle.y + perpendicular.y);
 
 		//draw middle
 		glBindVertexArray(vaoCtrlPoint);
@@ -393,55 +437,19 @@ public:
 		//draw circle around middle
 		const int TESSELATED_VERTICES = 20;
 		vec4 circlePoint = vec4(middle.x, middle.y, 0, 1) * TranslateMatrix(vec3(RADIUS, RADIUS, 0.0f));
-		circlePoints.push_back(circlePoint.x);
-		circlePoints.push_back(circlePoint.y);
+		circlePoints.push_back(circlePoint.x + perpendicular.x);
+		circlePoints.push_back(circlePoint.y + perpendicular.y);
 		for (int i = 0; i < TESSELATED_VERTICES + 1; i++) {
 			mat4 rotationMatrix = RotationMatrix(2.0f * 3.1415926f * (float)i / (float)TESSELATED_VERTICES, vec3(0, 0, 1));
 			vec4 rotatedPoint = circlePoint * TranslateMatrix(vec3(-middle.x, -middle.y, 0)) * rotationMatrix * TranslateMatrix(vec3(middle.x, middle.y, 0));
 			circleVecPoints.push_back(rotatedPoint);
-			circlePoints.push_back(rotatedPoint.x);
-			circlePoints.push_back(rotatedPoint.y);
+			circlePoints.push_back(rotatedPoint.x + perpendicular.x);
+			circlePoints.push_back(rotatedPoint.y + perpendicular.y);
 		}
 		glBufferData(GL_ARRAY_BUFFER, circlePoints.size() * sizeof(float), &circlePoints[0], GL_DYNAMIC_DRAW);
 		glDrawArrays(GL_LINE_STRIP, 0, TESSELATED_VERTICES + 2);
 
-		if (animate) {
-			std::vector<vec4> linePoints = curve->getLinePoints();
-			float speed = 0.08f;
 
-			if (middle.x > 9.5f) {
-				this->direction_right = false;
-			}
-			else if (middle.x < -9.5f) {
-				this->direction_right = true;
-			}
-
-			vec4 derivate = vec4(middle.x + speed, curve->getY(middle.x + speed), 0.0f, 1.0f) - vec4(middle.x, curve->getY(middle.x), 0.0f, 1.0f);
-			vec4 perpendicular = vec4(-derivate.y, derivate.x, 0.0f, 1.0f);
-			//middle = vec4(middle.x + 0.01f, perpendicular.x, 0.0f, 1.0f);
-			vec4 newMiddle = vec4(middle.x + 0.01f, curve->getY(middle.x + 0.01f), 0.0f, 1.0f) * TranslateMatrix(vec3(perpendicular.x, perpendicular.y * RADIUS, 0.0f));
-			if (direction_right) {
-				middle.x += speed;
-			}
-			else {
-				middle.x -= speed;
-				rotationSpeed *= -1.0f;
-			}
-
-			middle.y = curve->getY(middle.x);
-
-			middle.x += perpendicular.x);
-			printf("%f \n", perpendicular.x);
-			//Rotating the circle
-			rungAnimationRotationMatrix = RotationMatrix(2.0f * 3.1415926f * rotationSpeed, vec3(0, 0, 1));
-
-			//Moving the circle
-			//vec4 linePointAtNewPosition = curve->getPointAtPosition(middle.x + movementVector.x);
-
-			//middle = linePointAtNewPosition;
-
-
-		}
 
 		//draw rungs
 		const int RUNG_NUMBER = 6;
@@ -452,10 +460,10 @@ public:
 		for (int i = 0; i < RUNG_NUMBER; i++) {
 			mat4 rotationMatrix = RotationMatrix(2.0f * 3.1415926f * (float)i / (float)RUNG_NUMBER, vec3(0, 0, 1));
 			vec4 rotatedPoint = rungPoint * TranslateMatrix(vec3(-middle.x, -middle.y, 0)) * rotationMatrix * TranslateMatrix(vec3(middle.x, middle.y, 0));
-			rungPoints.push_back(middle.x);
-			rungPoints.push_back(middle.y);
-			rungPoints.push_back(rotatedPoint.x);
-			rungPoints.push_back(rotatedPoint.y);
+			rungPoints.push_back(middle.x +perpendicular.x);
+			rungPoints.push_back(middle.y + perpendicular.y);
+			rungPoints.push_back(rotatedPoint.x + perpendicular.x);
+			rungPoints.push_back(rotatedPoint.y + perpendicular.y);
 		}
 
 		glBufferData(GL_ARRAY_BUFFER, rungPoints.size() * sizeof(float), &rungPoints[0], GL_DYNAMIC_DRAW);
@@ -466,23 +474,24 @@ public:
 		const float HEAD_RADIUS = 0.2f;
 		vec4 headMiddle = middle * TranslateMatrix(vec3(0.0f, HEAD_DISTANCE, 0.0f));
 		vec4 headPoint = vec4(headMiddle.x, headMiddle.y, 0, 1) * TranslateMatrix(vec3(HEAD_RADIUS, HEAD_RADIUS, 0.0f));
-		headPoints.push_back(headPoint.x);
-		headPoints.push_back(headPoint.y);
+		
+		headPoints.push_back(headPoint.x + perpendicular.x);
+		headPoints.push_back(headPoint.y + perpendicular.y);
 		for (int i = 0; i < TESSELATED_VERTICES + 1; i++) {
 			mat4 rotationMatrix = RotationMatrix(2.0f * 3.1415926f * (float)i / (float)TESSELATED_VERTICES, vec3(0, 0, 1));
 			vec4 rotatedPoint = headPoint * TranslateMatrix(vec3(-headMiddle.x, -headMiddle.y, 0)) * rotationMatrix * TranslateMatrix(vec3(headMiddle.x, headMiddle.y, 0));
-			headPoints.push_back(rotatedPoint.x);
-			headPoints.push_back(rotatedPoint.y);
+			headPoints.push_back(rotatedPoint.x + perpendicular.x);
+			headPoints.push_back(rotatedPoint.y + perpendicular.y);
 		}
 
 		glBufferData(GL_ARRAY_BUFFER, headPoints.size() * sizeof(float), &headPoints[0], GL_DYNAMIC_DRAW);
 		glDrawArrays(GL_LINE_STRIP, 0, TESSELATED_VERTICES + 2);
 
 		//draw body
-		float bodyBottom = headMiddle.y - HEAD_RADIUS - HEAD_DISTANCE + RADIUS + RADIUS+0.4f;
-		bodyPoints.push_back(headMiddle.x);
-		bodyPoints.push_back(headMiddle.y - HEAD_RADIUS);
-		bodyPoints.push_back(headMiddle.x);
+		float bodyBottom = headMiddle.y + perpendicular.y - HEAD_RADIUS - HEAD_DISTANCE + RADIUS + RADIUS+0.4f;
+		bodyPoints.push_back(headMiddle.x + perpendicular.x);
+		bodyPoints.push_back(headMiddle.y + perpendicular.y - HEAD_RADIUS);
+		bodyPoints.push_back(headMiddle.x + perpendicular.x);
 		bodyPoints.push_back(bodyBottom);
 
 		glBufferData(GL_ARRAY_BUFFER, bodyPoints.size() * sizeof(float), &bodyPoints[0], GL_DYNAMIC_DRAW);
@@ -491,27 +500,27 @@ public:
 		const float LEG_LENGTH = 0.8f;
 		//Draw leg 1
 
-		std::vector<float> kneePoints = circle_circle_intersection(middle.x, bodyBottom, LEG_LENGTH, rungPoints[10], rungPoints[11], LEG_LENGTH);
-		leftLegPoints.push_back(middle.x);
+		std::vector<float> kneePoints = circle_circle_intersection(middle.x+ perpendicular.x, bodyBottom, LEG_LENGTH, rungPoints[10], rungPoints[11], LEG_LENGTH);
+		leftLegPoints.push_back(middle.x + perpendicular.x);
 		leftLegPoints.push_back(bodyBottom);
 		if (direction_right) {
-			leftLegPoints.push_back(kneePoints[0]);
+			leftLegPoints.push_back(kneePoints[0] );
 			leftLegPoints.push_back(kneePoints[1]);
 		}
 		else {
-			leftLegPoints.push_back(kneePoints[2]);
+			leftLegPoints.push_back(kneePoints[2] );
 			leftLegPoints.push_back(kneePoints[3]);
 		}
 
-		leftLegPoints.push_back(rungPoints[10]);
-		leftLegPoints.push_back(rungPoints[11]);
+		leftLegPoints.push_back(rungPoints[10] );
+		leftLegPoints.push_back(rungPoints[11] );
 
 		glBufferData(GL_ARRAY_BUFFER, leftLegPoints.size() * sizeof(float), &leftLegPoints[0], GL_DYNAMIC_DRAW);
 		glDrawArrays(GL_LINE_STRIP, 0, 3);
 
 		//Draw leg 2
-		kneePoints = circle_circle_intersection(middle.x, bodyBottom, LEG_LENGTH, rungPoints[rungPoints.size() - 2], rungPoints[rungPoints.size() - 1], LEG_LENGTH);
-		rightLegPoints.push_back(middle.x);
+		kneePoints = circle_circle_intersection(middle.x+ perpendicular.x, bodyBottom, LEG_LENGTH, rungPoints[rungPoints.size() - 2] , rungPoints[rungPoints.size() - 1] , LEG_LENGTH);
+		rightLegPoints.push_back(middle.x + perpendicular.x);
 		rightLegPoints.push_back(bodyBottom);
 		if (direction_right) {
 			rightLegPoints.push_back(kneePoints[0]);
@@ -524,7 +533,7 @@ public:
 
 
 		rightLegPoints.push_back(rungPoints[rungPoints.size()-2]);
-		rightLegPoints.push_back(rungPoints[rungPoints.size()-1]);
+		rightLegPoints.push_back(rungPoints[rungPoints.size()-1] );
 
 		glBufferData(GL_ARRAY_BUFFER, rightLegPoints.size() * sizeof(float), &rightLegPoints[0], GL_DYNAMIC_DRAW);
 		glDrawArrays(GL_LINE_STRIP, 0, 3);
