@@ -407,7 +407,7 @@ public:
 
 		if (animate) {
 			std::vector<vec4> linePoints = curve->getLinePoints();
-			float speed = 0.1f;
+			float speed = 0.08f;
 
 			if (middle.x > 9.5f) {
 				this->direction_right = false;
@@ -416,7 +416,7 @@ public:
 				this->direction_right = true;
 			}
 
-			vec4 derivate = vec4(middle.x + 0.01f, curve->getY(middle.x + 0.01f), 0.0f, 1.0f) - vec4(middle.x, curve->getY(middle.x), 0.0f, 1.0f);
+			vec4 derivate = vec4(middle.x + speed, curve->getY(middle.x + speed), 0.0f, 1.0f) - vec4(middle.x, curve->getY(middle.x), 0.0f, 1.0f);
 			vec4 perpendicular = vec4(-derivate.y, derivate.x, 0.0f, 1.0f);
 			//middle = vec4(middle.x + 0.01f, perpendicular.x, 0.0f, 1.0f);
 			vec4 newMiddle = vec4(middle.x + 0.01f, curve->getY(middle.x + 0.01f), 0.0f, 1.0f) * TranslateMatrix(vec3(perpendicular.x, perpendicular.y * RADIUS, 0.0f));
@@ -428,9 +428,10 @@ public:
 				rotationSpeed *= -1.0f;
 			}
 
-			middle.y = curve->getY(middle.x)+RADIUS+0.2f;
+			middle.y = curve->getY(middle.x);
 
-			//middle = middle * TranslateMatrix(vec3(perpendicular.x, perpendicular.y, 0.0f));
+			middle.x += perpendicular.x);
+			printf("%f \n", perpendicular.x);
 			//Rotating the circle
 			rungAnimationRotationMatrix = RotationMatrix(2.0f * 3.1415926f * rotationSpeed, vec3(0, 0, 1));
 
