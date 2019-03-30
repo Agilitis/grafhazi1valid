@@ -215,8 +215,9 @@ public:
 		if (wCtrlPoints.size() >= 4) {	// draw curve
 			std::vector<float> vertexData;
 			for (float i = -10.0f; i <= 10.0f; i+=0.1f) {	// Tessellate
-		/*		float tNormalized = (float)i / (nTesselatedVertices - 1);
-				float t = tStart() + (tEnd() - tStart()) * tNormalized;*/
+				if (i > 8.0f) {
+					vec4 wVertex = vec4(i, getY(i), 0.0f, 1.0f);
+				}
 				vec4 wVertex = vec4(i, getY(i), 0.0f, 1.0f);
 				vertexData.push_back(wVertex.x);
 				vertexData.push_back(wVertex.y);
@@ -226,7 +227,7 @@ public:
 			glBindBuffer(GL_ARRAY_BUFFER, vboCurve);
 			glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(float), &vertexData[0], GL_DYNAMIC_DRAW);
 			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 0.5f, 0);
-			glDrawArrays(GL_LINE_STRIP, 0, nTesselatedVertices);
+			glDrawArrays(GL_LINE_STRIP, 0, 20.0f / 0.1f);
 
 			if (animate) {
 
@@ -406,20 +407,8 @@ public:
 			perpendicular = vec4(-derivate.y, derivate.x, 0.0f, 1.0f);
 			float length = sqrtf(perpendicular.x * perpendicular.x + perpendicular.y * perpendicular.y);
 			perpendicular = (perpendicular / length) * (RADIUS + 0.15f);
-			std::vector<float> vectorPoints;
-			vectorPoints.push_back(middle.x + speed);
-			vectorPoints.push_back(curve->getY(middle.x + speed));
-			vectorPoints.push_back(middle.x + speed + perpendicular.x);
-			vectorPoints.push_back(curve->getY(middle.x + speed) + perpendicular.y);
-			glLineWidth(4.0f);
-			glBufferData(GL_ARRAY_BUFFER, vectorPoints.size() * sizeof(float), &vectorPoints[0], GL_DYNAMIC_DRAW);
-			glDrawArrays(GL_LINE_STRIP, 0, 2);
-			glLineWidth(1.0f);
-			printf("Speed: %f, perpendicular.x: %f \n", speed, perpendicular.x);
-			//middle.x += perpendicular.x;
-		/*	middle.y += perpendicular.y;
-			middle.x += perpendicular.x;*/
-			//Rotating the circle
+			glLineWidth(1.5f);
+
 			rungAnimationRotationMatrix = RotationMatrix(2.0f * 3.1415926f * rotationSpeed, vec3(0, 0, 1));
 		}
 
@@ -575,10 +564,6 @@ public:
 				}
 			}
 		}
-	/*	for (int i = 0; i < ts.size(); i++) {
-			ts[i] = (1.0f / (ts.size() + 1)) * i;
-			printf("%f \n", ts[i]);
-		}*/
 		printf("%d size\n", ts.size());
 
 	}
@@ -593,7 +578,7 @@ public:
 
 	float getY(float x) {
 		if (wCtrlPoints.size() >= 4) {
-			const float tension = -0.8f;
+			const float tension = 1.0f;
 			for (int i = 0; i < wCtrlPoints.size() - 2; i++) {
 				if (ts[i] <= x && x <= ts[i + 1]) {
 					vec4 v0;
@@ -648,6 +633,7 @@ void onInitialization() {
 	curve->AddControlPoint(0.0f, -0.5f);
 	curve->AddControlPoint(0.5f, -0.5f);
 	curve->AddControlPoint(1.0f, -0.5f);
+	curve->AddControlPoint(0.99f, -0.5f);
 	circle = new Circle();
 	circle->AddControlPoint(-0.8f, 0.3f);
 	gpuProgram.Create(vertexSource, fragmentSource, "outColor");
