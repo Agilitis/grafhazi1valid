@@ -33,31 +33,45 @@
 //=============================================================================================
 #include "framework.h"
 
-// vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
-const char * const vertexSource = R"(
-	#version 330				// Shader 3.3
-	precision highp float;		// normal floats, makes no difference on desktop computers
+// vertex shader in GLSL
+const char * vertexSource = R"(
+	#version 330
+    precision highp float;
 
-	uniform mat4 MVP;			// uniform variable, the Model-View-Projection transformation matrix
-	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
+	uniform mat4 MVP;			// Model-View-Projection matrix in row-major format
+
+	layout(location = 0) in vec2 vertexPosition;	// Attrib Array 0
+	layout(location = 1) in vec2 vertexUV;			// Attrib Array 1
+
+	out vec2 texCoord;								// output attribute
 
 	void main() {
-		gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;		// transform vp from modeling space to normalized device space
+		texCoord = vertexUV;														// copy texture coordinates
+		gl_Position = vec4(vertexPosition.x, vertexPosition.y, 0, 1) * MVP; 		// transform to clipping space
 	}
 )";
 
 // fragment shader in GLSL
-const char * const fragmentSource = R"(
-	#version 330			// Shader 3.3
-	precision highp float;	// normal floats, makes no difference on desktop computers
-	
-	uniform vec3 color;		// uniform variable, the color of the primitive
-	out vec4 outColor;		// computed color of the current pixel
+const char * fragmentSource = R"(
+	#version 330
+    precision highp float;
+	uniform vec3 color;
+	uniform sampler2D textureUnit;
+	uniform int isGPUProcedural;
+
+	in vec2 texCoord;			// variable input: interpolated texture coordinates
+	out vec4 fragmentColor;		// output that goes to the raster memory as told by glBindFragDataLocation
+
 
 	void main() {
-		outColor = vec4(0, 1, 0, 1);	// computed color is the color of the primitive
+		if(isGPUProcedural != 0){
+			fragmentColor = texture(textureUnit, texCoord);
+		}else{
+			fragmentColor = vec4(color, 1);
+		}
 	}
 )";
+
 
 GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao;	   // virtual world on the GPU
@@ -84,7 +98,98 @@ public:
 	void setCenter(vec2 center) {
 		wCenter = center;
 	}
+	vec4 getCenter() {
+		return vec4(wCenter.x, wCenter.y, 0.0f, 1.0f);
+	}
 };
+bool isGPUProcedural = false;
+Camera2D camera;	// 2D camera
+bool animate = true;
+float tCurrent = 0;	// current clock in sec
+const int nTesselatedVertices = 2000;
+const vec4 gravity = vec4(0.0f, -0.001f, 0.0f, 1.0f);
+class TexturedQuad {
+	unsigned int vao, vbo[2];
+	vec2 vertices[4], uvs[4];
+	Texture * pTexture;
+public:
+	TexturedQuad() {
+		vertices[0] = vec2(-50, -50); uvs[0] = vec2(0, 0);
+		vertices[1] = vec2(50, -50);  uvs[1] = vec2(1, 0);
+		vertices[2] = vec2(50, 50);   uvs[2] = vec2(1, 1);
+		vertices[3] = vec2(-50, 50);  uvs[3] = vec2(0, 1);
+	}
+	void Create() {
+		glGenVertexArrays(1, &vao);	// create 1 vertex array object
+		glBindVertexArray(vao);		// make it active
+
+		glGenBuffers(2, vbo);	// Generate 1 vertex buffer objects
+
+		// vertex coordinates: vbo[0] -> Attrib Array 0 -> vertexPosition of the vertex shader
+		glBindBuffer(GL_ARRAY_BUFFER, vbo[0]); // make it active, it is an array
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);	   // copy to that part of the memory which will be modified 
+		// Map Attribute Array 0 to the current bound vertex buffer (vbo[0])
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, NULL);     // stride and offset: it is tightly packed
+
+		glBindBuffer(GL_ARRAY_BUFFER, vbo[1]); // make it active, it is an array
+		glBufferData(GL_ARRAY_BUFFER, sizeof(uvs), uvs, GL_STATIC_DRAW);	   // copy to that part of the memory which is not modified 
+		// Map Attribute Array 0 to the current bound vertex buffer (vbo[0])
+		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, NULL);     // stride and offset: it is tightly packed
+
+		int width = 128, height = 128;
+		std::vector<vec4> image(width * height);
+		for (int y = 0; y < height; y++) {
+			float mountainTop = 1.0f / height;
+			for (int x = 0; x < width; x++) {
+				image[y * width + x] = vec4(0.6f, 0.48f + mountainTop, 0.32f, 1);
+				
+			}
+		}
+
+		pTexture = new Texture(width, height, image);
+	}
+
+	void MoveVertex(float cX, float cY) {
+		glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
+
+		vec4 wCursor4 = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
+		vec2 wCursor(wCursor4.x, wCursor4.y);
+
+		int closestVertex = 0;
+		float distMin = length(vertices[0] - wCursor);
+		for (int i = 1; i < 4; i++) {
+			float dist = length(vertices[i] - wCursor);
+			if (dist < distMin) {
+				distMin = dist;
+				closestVertex = i;
+			}
+		}
+		vertices[closestVertex] = wCursor;
+
+		// copy data to the GPU
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);	   // copy to that part of the memory which is modified 
+	}
+
+	void Draw() {
+		glBindVertexArray(vao);	// make the vao and its vbos active playing the role of the data source
+
+		mat4 MVPTransform = camera.V() * camera.P();
+
+		// set GPU uniform matrix variable MVP with the content of CPU variable MVPTransform
+		MVPTransform.SetUniform(gpuProgram.getId(), "MVP");
+
+		int location = glGetUniformLocation(gpuProgram.getId(), "isGPUProcedural");
+		if (location >= 0) glUniform1i(location, true); // set uniform variable MVP to the MVPTransform
+		else printf("isGPUProcedural cannot be set\n");
+
+		pTexture->SetUniform(gpuProgram.getId(), "textureUnit");
+
+		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);	// draw two triangles forming a quad
+	}
+};
+
 
 // Forrás: https://codereview.stackexchange.com/questions/144586/finding-the-distance-between-two-points-in-c
 
@@ -92,31 +197,55 @@ float distanceBetweenTwoPoints(float x, float y, float a, float b) {
 	return sqrtf(pow(x - a, 2) + pow(y - b, 2));
 }
 
-Camera2D camera;	// 2D camera
-bool animate = true;
-float tCurrent = 0;	// current clock in sec
-const int nTesselatedVertices = 2000;
-const vec4 gravity = vec4(0.0f, -0.001f, 0.0f, 1.0f);
+
 
 class Curve {
 	unsigned int vaoCurve, vboCurve;
 	unsigned int vaoCtrlPoints, vboCtrlPoints;
 	unsigned int vaoAnimatedObject, vboAnimatedObject;
 	int currentSize;
+	vec4 color;
 	std::vector<vec4> linePoints;
 protected:
 	std::vector<vec4> wCtrlPoints;		// coordinates of control points
+	float fill1;
+	float fill2;
+	float fill3;
+	float fill4;
+
 public:
+
 	virtual float getY(float x){
 		return 0.0f;
 	}
+
+	virtual void setFill(float point1, float point2, float point3, float point4) {
+		fill1 = point1;
+		fill2 = point2;
+		fill3 = point3;
+		fill4 = point4;
+	}
+
+	virtual void translateAllControlPoints(vec4 translateVector) {
+		for (int i = 0; i < wCtrlPoints.size(); i++) {
+			wCtrlPoints[i] = wCtrlPoints[i] * TranslateMatrix(vec3(translateVector.x, translateVector.y, 0.0f));
+			
+		}
+	}
+
+	virtual void setColor(vec4 color) {
+		this->color = color;
+	}
+
+	virtual void setTension(float tension) {};
+	virtual float getTension() { return 0.0f; };
 
 	int getPoints() {
 		return wCtrlPoints.size();
 	}
 
 	Curve() {
-
+		color = vec4(1.0f, 0.5f, 0.0f, 1.0f);
 		// Curve
 		currentSize = 0;
 		glGenVertexArrays(1, &vaoCurve);
@@ -200,34 +329,36 @@ public:
 		VPTransform.SetUniform(gpuProgram.getId(), "MVP");
 
 		int colorLocation = glGetUniformLocation(gpuProgram.getId(), "color");
-
+		int location = glGetUniformLocation(gpuProgram.getId(), "isGPUProcedural");
+		if (location >= 0) glUniform1i(location, false); // set uniform variable MVP to the MVPTransform
 
 
 		if (wCtrlPoints.size() > 0) {	// draw control points
 			glBindVertexArray(vaoCtrlPoints);
 			glBindBuffer(GL_ARRAY_BUFFER, vboCtrlPoints);
 			glBufferData(GL_ARRAY_BUFFER, wCtrlPoints.size() * 4 * sizeof(float), &wCtrlPoints[0], GL_DYNAMIC_DRAW);
-			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 0, 0);
-			glPointSize(10.0f);
+			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 1, 0);
+			glPointSize(0.01f);
 			glDrawArrays(GL_POINTS, 0, wCtrlPoints.size());
 		}
 
 		if (wCtrlPoints.size() >= 4) {	// draw curve
 			std::vector<float> vertexData;
+			vertexData.push_back(fill1);
+			vertexData.push_back(fill2);
 			for (float i = -10.0f; i <= 10.0f; i+=0.1f) {	// Tessellate
-				if (i > 8.0f) {
-					vec4 wVertex = vec4(i, getY(i), 0.0f, 1.0f);
-				}
 				vec4 wVertex = vec4(i, getY(i), 0.0f, 1.0f);
 				vertexData.push_back(wVertex.x);
 				vertexData.push_back(wVertex.y);
 			}
+			vertexData.push_back(fill3);
+			vertexData.push_back(fill4);
 			// copy data to the GPU
 			glBindVertexArray(vaoCurve);
 			glBindBuffer(GL_ARRAY_BUFFER, vboCurve);
 			glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(float), &vertexData[0], GL_DYNAMIC_DRAW);
-			if (colorLocation >= 0) glUniform3f(colorLocation, 1, 0.5f, 0);
-			glDrawArrays(GL_LINE_STRIP, 0, 20.0f / 0.1f);
+			if (colorLocation >= 0) glUniform3f(colorLocation, color.x, color.y, color.z);
+			glDrawArrays(GL_TRIANGLE_FAN, 0, (20.0f / 0.1f)+2);
 
 			if (animate) {
 
@@ -328,6 +459,7 @@ std::vector<float> circle_circle_intersection(float x0, float y0, float r0,
 
 
 Curve * curve;
+Curve * skyCurve;
 
 class Circle {
 	float position;
@@ -360,6 +492,7 @@ public:
 
 
 
+
 	void Draw() {
 
 		mat4 VPTransform = camera.V() * camera.P();
@@ -367,6 +500,8 @@ public:
 		VPTransform.SetUniform(gpuProgram.getId(), "MVP");
 
 		int colorLocation = glGetUniformLocation(gpuProgram.getId(), "color");
+		int location = glGetUniformLocation(gpuProgram.getId(), "isGPUProcedural");
+		if (location >= 0) glUniform1i(location, false); // set uniform variable MVP to the MVPTransform
 		std::vector<float> middlePoint;
 		std::vector<float> circlePoints;
 		std::vector<float> headPoints;
@@ -381,29 +516,36 @@ public:
 		float rotationSpeed = tCurrent / -5.0f;
 		//setup rotation matrix for animation	
 		if (animate) {
-			std::vector<vec4> linePoints = curve->getLinePoints();
 			float speed = 0.06f;
+		
+			vec4 derivate = vec4(middle.x + 0.001f, curve->getY(middle.x + 0.001f), 0.0f, 1.0f) - vec4(middle.x, curve->getY(middle.x), 0.0f, 1.0f);
+			float derivateLength = sqrtf(derivate.x * derivate.x + derivate.y * derivate.y);
+			float gravityForce = (derivate.y/derivateLength) * -0.06f;
+
+			printf("%f \n", derivate.y / derivateLength);
 
 			if (middle.x > 9.5f) {
 				this->direction_right = false;
+
 			}
 			else if (middle.x < -9.5f) {
 				this->direction_right = true;
-			}
 
+			}
 
 			if (direction_right) {
+				speed += gravityForce;
 				middle.x += speed;
-
 			}
+
 			else {
+				speed -= gravityForce;
 				middle.x -= speed;
 				rotationSpeed *= -1.0f;
 			}
 
 			middle.y = curve->getY(middle.x + speed);
 
-			vec4 derivate = vec4(middle.x + 0.001f, curve->getY(middle.x + 0.001f), 0.0f, 1.0f) - vec4(middle.x, curve->getY(middle.x), 0.0f, 1.0f);
 			perpendicular = vec4(-derivate.y, derivate.x, 0.0f, 1.0f);
 			float length = sqrtf(perpendicular.x * perpendicular.x + perpendicular.y * perpendicular.y);
 			perpendicular = (perpendicular / length) * (RADIUS + 0.15f);
@@ -548,6 +690,7 @@ Circle* circle;
 class KochanekBartelsCurve : public Curve {
 public:
 	std::vector<float> ts;
+	float tension;
 	void AddControlPoint(float cX, float cY) {
 		vec4 wVertex = vec4(cX, cY, 0, 1) * camera.Pinv() * camera.Vinv();
 		printf("Adding control point at: %f %f", wVertex.x, wVertex.y);
@@ -568,6 +711,35 @@ public:
 
 	}
 
+	KochanekBartelsCurve(float tension) {
+		this->tension = tension;
+	}
+
+	void translateAllControlPoints(vec4 translateVector) {
+		for (int i = 0; i < wCtrlPoints.size(); i++) {
+			wCtrlPoints[i] = wCtrlPoints[i] * TranslateMatrix(vec3(translateVector.x, translateVector.y, 0.0f));
+			ts[i] = wCtrlPoints[i].x;
+		}
+	}
+
+	void setTension(float tension) {
+		this->tension = tension;
+	}
+
+	float getTension() {
+		return this->tension;
+	}
+
+
+	virtual void setFill(float point1, float point2, float point3, float point4) {
+		fill1 = point1;
+		fill2 = point2;
+		fill3 = point3;
+		fill4 = point4;
+	}
+
+
+
 	vec4 hermite_interpolation(vec4 p0, vec4 v0, float t0, vec4 p1, vec4 v1, float t1, float t) {
 		vec4 a0 = p0;
 		vec4 a1 = v0;
@@ -578,7 +750,6 @@ public:
 
 	float getY(float x) {
 		if (wCtrlPoints.size() >= 4) {
-			const float tension = 1.0f;
 			for (int i = 0; i < wCtrlPoints.size() - 2; i++) {
 				if (ts[i] <= x && x <= ts[i + 1]) {
 					vec4 v0;
@@ -624,16 +795,29 @@ private:
 
 
 bool followCircle = false;
-
+TexturedQuad txq = TexturedQuad();
 
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
-	curve = new KochanekBartelsCurve();
+	txq.Create();
+	skyCurve = new KochanekBartelsCurve(-0.5f);
+	skyCurve->AddControlPoint(-1.0f, 1.0f);
+	skyCurve->AddControlPoint(0.0f, 0.8f);
+	skyCurve->AddControlPoint(0.5f, 0.5f);
+	skyCurve->AddControlPoint(1.0f, 1.0f);
+	skyCurve->AddControlPoint(.99f, 1.0f);
+	skyCurve->setFill(-50.0f, 50.0f, 50.0f, 50.0f);
+	skyCurve->setColor(vec4(0.4f, 0.8f, 1.0f, 1.0f));
+
+	curve = new KochanekBartelsCurve(0.5f);
+	curve->setFill(-50.0f, -50.0f, 50.0f, -50.f);
 	curve->AddControlPoint(-1.0f, -0.5f);
 	curve->AddControlPoint(0.0f, -0.5f);
 	curve->AddControlPoint(0.5f, -0.5f);
 	curve->AddControlPoint(1.0f, -0.5f);
 	curve->AddControlPoint(0.99f, -0.5f);
+	curve->setColor(vec4(0.376f, 0.502f, 0.22f, 1.0f));
+
 	circle = new Circle();
 	circle->AddControlPoint(-0.8f, 0.3f);
 	gpuProgram.Create(vertexSource, fragmentSource, "outColor");
@@ -643,6 +827,8 @@ void onInitialization() {
 void onDisplay() {
 	glClearColor(0, 0, 0, 0);     // background color
 	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
+	txq.Draw();
+	skyCurve->Draw();
 	curve->Draw();
 	if (curve->getPoints() >= 4) {
 		circle->Draw();
@@ -662,16 +848,33 @@ void onDisplay() {
 	glBindVertexArray(vao);  // Draw call
 	glDrawArrays(GL_LINE_STRIP, 0 /*startIdx*/, 3 /*# Elements*/);
 	if (followCircle) {
+		vec4 circleCenter = vec4(circle->getCenter().x, circle->getCenter().y, 0.0f, 1.0f);
+		vec4 distance = camera.getCenter() - circleCenter;
 		camera.setCenter(circle->getCenter());
+		skyCurve->translateAllControlPoints(distance * -1.0f);
+		
 	}
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
 
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
-	if (key == 'd') glutPostRedisplay();         // if d, invalidate display, i.e. redraw
+	if (key == 'd') {
+		glutPostRedisplay();
+	} // if d, invalidate display, i.e. redraw
 	if (key == 'q') {
-		circle->AddControlPoint(1.0f, 0.0f);
+
+	}
+	if (key == 'o') {
+		curve->setTension(curve->getTension() + 0.1f);
+		printf("%f \n", curve->getTension());
+
+	}
+	if (key == 'l') {
+		curve->setTension(curve->getTension() - 0.1f);
+		printf("%f \n", curve->getTension());
+
+
 
 	}
 	if (key == ' ') {
